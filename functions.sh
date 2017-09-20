@@ -4,7 +4,7 @@
 _functions_defined=1
 
 # utility function used by other things:
-function dhms_to_sec () 
+dhms_to_sec () 
 {
   # convert D:H:M:S to seconds
   if [[ $# -eq 1 ]]; then
@@ -34,7 +34,7 @@ function dhms_to_sec ()
 }
 
 # what was a job charged?
-function nersc_hours ()
+nersc_hours ()
 {
   local mcf dhms 
   local unit=NNodes
@@ -83,15 +83,15 @@ function nersc_hours ()
 
 # not slurm related, but when we usgrsu to a user account, it's nice to get the X formwarding stuff displayed upfront
 # (paste the string this prints into the terminal as the user)
-function user () 
+user () 
 { 
   echo "export DISPLAY=$DISPLAY ; xauth add `xauth list $DISPLAY`" ; usgrsu $* 
 }
 
 # show what jobs have run on a given node or list of nodes, during the last day
-function nodehistory () 
+nodehistory () 
 { 
-  sacct --node=$* --format=start,end,job,jobname,user,account,ncpus,nodelist -X  
+  sacct --node=$1 --format=start,end,job,jobname,user,account,ncpus,nodelist -X  
 }
 
 # handy function to get the more useful info about jobs:
@@ -120,7 +120,35 @@ jobsummary ()
 #function scancel () { local args="$*" ; [[ -z "$args" ]] && args=$(squeue -u $USER -t R,PD -o %A -h | tr '\n' ' ') ; echo "cancelling jobs:" ; squeue -j ${args// /,}; ${SLURM_ROOT:-/usr}/bin/scancel $args ; }
 
 # list info about qos and partitions:
-function qos () { sacctmgr show -p qos | cut -d'|' -f 1,2,9,12,15,18,19,20,21 | column -s '|' -t ; }
-function partitions () { sinfo -O "partition,available:6,time:.12,nodes:.6" ; }
+qos () { sacctmgr show -p qos | cut -d'|' -f 1,2,9,12,15,18,19,20,21 | column -s '|' -t ; }
+partitions () { sinfo -O "partition,available:6,time:.12,nodes:.6" ; }
 
 
+res_compact_nodelist() {
+    resname=$1
+    scontrol --oneliner show res=$resname | cut -d ' ' -f 5 | cut -d '=' -f 2
+}
+
+res_nodelist() {
+    resname=$1
+    compact_list=$(res_compact_nodelist "$resname")
+    scontrol show hostname $compact_list
+}
+
+res_get_modes() {
+    resname=$1
+    compact_list=$(res_compact_nodelist "$resname")
+    sinfo --format="%15b %8D %A" --nodes=$compact_list
+}
+
+res_set_mode() {
+    resname=$1
+    mode=$2
+    echo setting $mode for $resname
+    nodelist=$(res_nodelist "$resname")
+    for node in $nodelist; do
+        sbatch -C $mode -p regular --reservation=$resname --nodelist=$node \
+            --output="modeset-%j.out" \
+            --wrap="hostname"
+    done
+}
