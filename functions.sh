@@ -85,7 +85,7 @@ nersc_hours ()
 # (paste the string this prints into the terminal as the user)
 user () 
 { 
-  echo "export DISPLAY=$DISPLAY ; xauth add `xauth list $DISPLAY`" ; usgrsu $* 
+  [[ -z $DISPLAY ]] || echo "export DISPLAY=$DISPLAY ; xauth add `xauth list $DISPLAY`" ; usgrsu $* 
 }
 
 # show what jobs have run on a given node or list of nodes, during the last day
@@ -117,31 +117,41 @@ jobsummary ()
 }
 
 # this cancels all my jobs:
-#function scancel () { local args="$*" ; [[ -z "$args" ]] && args=$(squeue -u $USER -t R,PD -o %A -h | tr '\n' ' ') ; echo "cancelling jobs:" ; squeue -j ${args// /,}; ${SLURM_ROOT:-/usr}/bin/scancel $args ; }
+function sclear () 
+{ 
+  local args="$*" 
+  [[ -z "$args" ]] && args=$(squeue -u $USER -t R,PD -o %A -h | tr '\n' ' ') 
+  echo "cancelling jobs:" 
+  squeue -j ${args// /,}
+  ${SLURM_ROOT:-/usr}/bin/scancel $args 
+}
 
 # list info about qos and partitions:
 qos () { sacctmgr show -p qos | cut -d'|' -f 1,2,9,12,15,18,19,20,21 | column -s '|' -t ; }
 partitions () { sinfo -O "partition,available:6,time:.12,nodes:.6" ; }
 
-
-res_compact_nodelist() {
+res_compact_nodelist() 
+{
     resname=$1
     scontrol --oneliner show res=$resname | cut -d ' ' -f 5 | cut -d '=' -f 2
 }
 
-res_nodelist() {
+res_nodelist() 
+{
     resname=$1
     compact_list=$(res_compact_nodelist "$resname")
     scontrol show hostname $compact_list
 }
 
-res_get_modes() {
+res_get_modes() 
+{
     resname=$1
     compact_list=$(res_compact_nodelist "$resname")
     sinfo --format="%15b %8D %A" --nodes=$compact_list
 }
 
-res_set_mode() {
+res_set_mode() 
+{
     resname=$1
     mode=$2
     echo setting $mode for $resname
