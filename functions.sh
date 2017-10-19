@@ -1,7 +1,7 @@
 # source this file to get the functions into your environment
 
 # dummy arg to add to env so bashrc can avoid unnecessarily sourcing this
-_functions_defined=1
+_slurm_helpers_defined=1
 
 # utility function used by other things:
 dhms_to_sec () 
@@ -81,7 +81,7 @@ nersc_hours ()
   done
 }
 
-# not slurm related, but when we usgrsu to a user account, it's nice to get the X formwarding stuff displayed upfront
+# not slurm related, but when we usgrsu to a user account, it's nice to get the X forwarding stuff displayed upfront
 # (paste the string this prints into the terminal as the user)
 user () 
 { 
@@ -147,7 +147,7 @@ res_get_modes()
 {
     resname=$1
     compact_list=$(res_compact_nodelist "$resname")
-    sinfo --format="%15b %8D %A" --nodes=$compact_list
+    sinfo --format="%15b %8D %9A %N" --nodes=$compact_list
 }
 
 res_set_mode() 
