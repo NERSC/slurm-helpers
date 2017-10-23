@@ -10,9 +10,13 @@ dhms_to_sec ()
   if [[ $# -eq 1 ]]; then
     local total=0
     local -a mult=(1 60 3600 86400)
+    # deal with leading -ive sign and turns day separator to :
+    local a=${1:0:1}
+    local b=${1:1}
     local IFS=':'
-    local -a val=($1)
+    local -a val=(${a}${b/-/:})
     unset IFS
+    # leading "-" sign will now be ":"
     if [[ ${val[0]} =~ ^(-?)([0-9]+)$ ]]; then
       # deal with negatives:
       local sign=${BASH_REMATCH[1]}
@@ -25,7 +29,7 @@ dhms_to_sec ()
         let total+=$(( ${val[$i]/#0}*${mult[$j]} ))
         let j+=1
       done
-      _retstr=
+      #_retstr=
       printf "%s\n" "${sign}${total}"
       return 0
     fi
@@ -39,6 +43,8 @@ nersc_hours ()
   local mcf dhms 
   local unit=NNodes
   local qos_factor=1
+  local nodes=0
+  local walltime=0  # in d-hh:mm:ss
   [[ "$NERSC_HOST" == "edison" ]] && mcf=48 || mcf=80
 
   while [[ $# -gt 0 ]]; do
@@ -46,13 +52,24 @@ nersc_hours ()
       -knl) mcf=96 ;;
       -shared) unit=NCPUS ;; 
       -prem|-premium) qos_factor=2 ;;
+      -n) nodes=$2 ; shift ;;
+      -t) walltime=$2 ; shift ;;
       *) jobids=$* ; break ;;
     esac
     shift
   done
 
+  if [[ $nodes -gt 0 && "$walltime" != "0" ]]; then
+    # show estimate instead
+    jobids=null
+  fi  
+
   for jobid in $jobids ; do
-    local usage=$(sacct -a -n -X -p -o Elapsed,$unit -j $jobid)
+    if [[ $jobid == "null" ]]; then
+      local usage="$walltime|$nodes|"
+    else
+      local usage=$(sacct -a -n -X -p -o Elapsed,$unit -j $jobid)
+    fi
     usage=${usage%|}
     local dhms=${usage%%|*}
     local count=${usage##*|}
