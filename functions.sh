@@ -4,10 +4,23 @@
 _slurm_helpers_defined=1
 
 # utility function used by other things:
+# (this is here mostly in suport of nersc_hours)
 dhms_to_sec () 
 {
-  # convert D:H:M:S to seconds
-  if [[ $# -eq 1 ]]; then
+  local usage="$0 D:H:M:S"$'\n'
+  usage+='print number of seconds corresponding to a timespan'$'\n'
+  usage+='copes with leading negative sign'$'\n'
+  usage+='accepted formats are:'$'\n'
+  usage+='  [-][[[D:]H:]M:]S'$'\n'
+  usage+='  [-][[[D-]H:]M:]S'$'\n'
+  usage+='Examples:'$'\n'
+  usage+='  1-12:00:00     1 day 12 hours'$'\n'
+  usage+='  2:00:01:00     2 days and 1 minute'$'\n'
+  usage+='  -30:00         negative half an hour'$'\n'
+  if [[ $# -ne 1 || $1 =~ ^-h ]] ; then
+    echo "$usage"
+    return 1
+  else
     local total=0
     local -a mult=(1 60 3600 86400)
     # deal with leading -ive sign and turns day separator to :
@@ -34,12 +47,18 @@ dhms_to_sec ()
       return 0
     fi
   fi
+  echo "$usage"
   return 1
 }
 
 # what was a job charged?
 nersc_hours ()
 {
+  local usage="calculate NERSC-hours for a completed job, or set of jobs,"$'\n'
+  usage+="or a walltime and nodecount"$'\n'
+  usage+="sets machine charge factor based on current NERSC_HOST ($NERSC_HOST)"$'\n'
+  usage+="Usage: $0 [-knl] [-prem] [-shared] <jobid1> <jobid2> ..."$'\n'
+  usage+="Usage: $0 [-knl] [-prem] -n <nodecount> -t <walltime-in-d-hh:mm:ss>"$'\n'
   local mcf dhms 
   local unit=NNodes
   local qos_factor=1
@@ -47,24 +66,31 @@ nersc_hours ()
   local walltime=0  # in d-hh:mm:ss
   [[ "$NERSC_HOST" == "edison" ]] && mcf=48 || mcf=80
 
+  if [[ $# -eq 0 ]]; then
+    echo "$usage"
+    return 1
+  fi
+  local -a jobids
   while [[ $# -gt 0 ]]; do
     case $1 in 
+      -h*) echo "$usage" ; return 1 ;;
       -knl) mcf=96 ;;
       -shared) unit=NCPUS ;; 
       -prem|-premium) qos_factor=2 ;;
       -n) nodes=$2 ; shift ;;
       -t) walltime=$2 ; shift ;;
-      *) jobids=$* ; break ;;
+      *) jobids=($*) ; break ;;
     esac
     shift
   done
 
   if [[ $nodes -gt 0 && "$walltime" != "0" ]]; then
     # show estimate instead
-    jobids=null
+    jobids=( null )
   fi  
 
-  for jobid in $jobids ; do
+  local total=0
+  for jobid in ${jobids[@]} ; do
     if [[ $jobid == "null" ]]; then
       local usage="$walltime|$nodes|"
     else
@@ -91,11 +117,16 @@ nersc_hours ()
         usage=$((usage*4/5))
       fi
     fi
+    let total+=$usage
 
     # at this point we have NERSC-seconds, convert to NERSC-hours:
     usage=$((usage/3600))
-    echo "$usage"
+    echo "job $jobid: $usage nersc-hours"
   done
+  if [[ ${#jobids[@]} -gt 1 ]]; then
+    total=$((total/3600))
+    echo "total: $total nersc-hours"
+  fi
 }
 
 # not slurm related, but when we usgrsu to a user account, it's nice to get the X forwarding stuff displayed upfront
@@ -111,7 +142,6 @@ nodehistory ()
   sacct --node=$1 --format=start,end,job,jobname,user,account,ncpus,nodelist -X  
 }
 
-# handy function to get the more useful info about jobs:
 jobsummary () 
 { 
   local opts='' 
