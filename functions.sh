@@ -94,7 +94,7 @@ nersc_hours ()
     if [[ $jobid == "null" ]]; then
       local usage="$walltime|$nodes|"
     else
-      local usage=$(sacct -a -n -X -p -o Elapsed,$unit -j $jobid)
+      local usage=$(sacct -a -n -X -p -o Elapsed,$unit -j $jobid --noconvert)
     fi
     usage=${usage%|}
     local dhms=${usage%%|*}
