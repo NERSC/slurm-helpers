@@ -166,11 +166,7 @@ jobsummary ()
 # this cancels all my jobs:
 function sclear () 
 { 
-  local args="$*" 
-  [[ -z "$args" ]] && args=$(squeue -u $USER -t R,PD -o %A -h | tr '\n' ' ') 
-  echo "cancelling jobs:" 
-  squeue -j ${args// /,}
-  ${SLURM_ROOT:-/usr}/bin/scancel $args 
+  ${SLURM_ROOT:-/usr}/bin/scancel -u $USER
 }
 
 # list info about qos and partitions:
