@@ -94,7 +94,7 @@ nersc_hours ()
     if [[ $jobid == "null" ]]; then
       local usage="$walltime|$nodes|"
     else
-      local usage=$(sacct -a -n -X -p -o Elapsed,$unit -j $jobid --noconvert)
+      local usage=$(sacct --noconvert -a -n -X -p -o Elapsed,$unit -j $jobid)
     fi
     usage=${usage%|}
     local dhms=${usage%%|*}
@@ -199,8 +199,11 @@ res_set_mode()
     mode=$2
     echo setting $mode for $resname
     nodelist=$(res_nodelist "$resname")
+    # if the reservation is not yet active, don't specify it:
+    scontrol show res $resname | grep -q 'State=INACTIVE' && resname=""
     for node in $nodelist; do
-        sbatch -C $mode -p regular --reservation=$resname --nodelist=$node \
+        sbatch -C $mode -p regular "${resname:+--reservation=$resname}" \
+            --nodelist=$node \
             --output="modeset-%j.out" \
             --wrap="hostname"
     done
