@@ -127,6 +127,14 @@ class CrayXC:
         address += [ cab, group, int(match.group('row')), col ]
         return address
 
+    def nid_from_nodename(self, nodename):
+        """ nodenames are in format nid00000 """
+        return int(nodename[3:])
+
+    def nodename_from_nid(self, nid):
+        """ nodenames are in format nid00000 """
+        return 'nid{:05d}'.format(nid)
+
 
 import unittest
 import re
