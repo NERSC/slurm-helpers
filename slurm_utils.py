@@ -50,12 +50,17 @@ from operator import mul
 import re
 
 class CrayXC:
-    """ A Cray XC maps nodenames ("nid00123") to addresses (row, cabinet,
+    """ A Cray XC maps nodenames ("nid00123") to addresses (row, column,
         cage (ie chassis), slot (ie blade), node). From this we get a 
-        "cname" like:  c{cab:d}-{row:d}c{cage:d}s{slot:d}n{node:d} 
-        (eg c2-0c1s2n3)
-        Note: the fact that cabinet preceeds row in the cname is confusing, 
-        but true
+        "cname" like:  c{col:d}-{row:d}c{cage:d}s{slot:d}n{node:d} 
+        (eg c2-0c1s2n3). Note that to get the dragonfly group, the column
+        address needs to be decomposed into (group, cabinet). My original 
+        purpose for this class is/was to support drawing the dragonfly 
+        topology in a spatially-meaningful manner, so I'm more interested in
+        (cabinet, group) than (column), and the address here is cast as a
+        nest of dimensions from node-in-slot to row-in-room, with col-in-row
+        decomposed into (cab-in-group, group-in-row), then the column address
+        appended as a derived component.
     """
 
     dim_names = [ 'nodes_per_slot',    # SLOT
@@ -74,10 +79,17 @@ class CrayXC:
              'row',
              'col' ]
     dims = (lambda d: {name: d.index(name) for name in d})(_dims) 
+    # constants for dims (col is special and so lowercase)
     SLOT,CAGE,CAB,GROUP,ROW,ROOM,col = range(len(dims))
 
     def __init__(self, extents):
-        assert len(extents)==len(self.dims)-1 # we calculate col
+        """ describe a Cray XC cluster in terms of the extents of each rank
+            in it's Dragonfly topology. Extents should correspond with CrayXC.dim_names.
+            Some example extents are: 
+                cori:   [4, 16, 3, 2, 6, 6]
+                edison: [4, 16, 3, 2, 4, 4]
+        """
+        assert len(extents)==len(self.dims)-1 # don't pass col, we calculate it
         self.extents = list(extents) + [ extents[self.GROUP]*extents[self.ROW] ]
         # total address space enclosed at each rank (eg 4x16=64 nodes/cage)
         self.space = [reduce(mul, extents[:i]) for i in range(1,len(extents)+1)]
