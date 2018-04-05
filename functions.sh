@@ -140,7 +140,8 @@ user ()
 nodehistory () 
 { 
   #sacct --node=$1 --format=start,end,job,jobname,user,account,ncpus,nodelist,exitcode -X  
-  SLURM_TIME_FORMAT='%s' sacct --node=$1 --format=start,end,job,jobname,user,account,ncpus,nodelist,exitcode -X | awk 'NR<=2 {print "           " $0 ;} NR>2 { key=$1 ; $1=strftime("%Y-%m-%d-%H:%M:%S", $1); $2=strftime("%Y-%m-%d-%H:%M:%S", $2); print key "    " $0 | "column -t | sort -sn -k1"}'
+  node=$1 ; shift
+  SLURM_TIME_FORMAT='%s' sacct --node=$node $* --format=start,end,job,jobname,user,account,ncpus,nodelist,exitcode -X | awk 'NR<=2 {print "           " $0 ;} NR>2 { key=$1 ; $1=strftime("%Y-%m-%d-%H:%M:%S", $1); $2=strftime("%Y-%m-%d-%H:%M:%S", $2); print key "    " $0 | "column -t | sort -sn -k1"}'
 }
 
 jobsummary () 
