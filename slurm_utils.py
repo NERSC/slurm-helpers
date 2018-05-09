@@ -28,6 +28,16 @@ def cname_to_nodename(cname):
     if _cluster is None:
         raise Exception("Need a cluster definition!")
     return _cluster.nodename_from_cname(cname)
+
+def nodelist_to_cnames(nlist: str):
+    if _cluster is None:
+        raise Exception("Need a cluster definition!")
+    cnames = []
+    for name in expand_nodelist(nlist):
+        cnames.append(_cluster.cname_from_nodename(nodename))
+    return cnames
+    
+
     
     
 
