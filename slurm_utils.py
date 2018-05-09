@@ -1,8 +1,39 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+
+# system python 3 on Cori is broken so user will need to load a
+# python module, which will be 3.6+ anyway, so we'll take advantage
+# of some of python's modern features:
+import sys
+if sys.version_info[0] < 3 or sys.version_info[1] < 5:
+    print(sys.version_info)
+    raise Exception("Requires python 3.5+ .. try\nmodule load python/3.6-anaconda-4.4")
+
+_cluster = None
+def init(nodes_per_slot=4, slots_per_cage=16, cages_per_cab=3, 
+         cabs_per_group=2, groups_per_row=1, rows=1):
+    global _cluster
+    _cluster = CrayXC(extents={'slot':nodes_per_slot, 
+                               'cage':slots_per_cage, 
+                               'cab':cages_per_cab,
+                               'group':cabs_per_group, 
+                               'row':groups_per_row, 
+                               'room':rows})
+
+def nodename_to_cname(nodename):
+    if _cluster is None:
+        raise Exception("Need a cluster definition!")
+    return _cluster.cname_from_nodename(nodename)
+
+def cname_to_nodename(cname):
+    if _cluster is None:
+        raise Exception("Need a cluster definition!")
+    return _cluster.nodename_from_cname(cname)
+    
+    
 
 import string
 import re
-def expand_nodelist(nlist):
+def expand_nodelist(nlist: str, as_list=False) -> str:
     """ translate a nodelist like 'nid[02516-02575,02580-02635,02836]' into a 
         list of explicitly-named nodes, eg 'nid02516 nid02517 ...'
     """
@@ -21,11 +52,14 @@ def expand_nodelist(nlist):
                 nodes += [ '{0:s}{2:{1:s}d}'.format(prefix,width,int(first)) ] 
     else:
         nodes += [ prefix ]
-    return ' '.join(nodes)
+    if as_list:
+        return nodes
+    else:
+        return ' '.join(nodes)
 
 import unittest
 class TestExpandNodelist(unittest.TestCase):
-
+    
     def test_expandnodelist(self):
         # slightly arbitrary list of test cases:
         nlist = 'nid02085'
@@ -49,82 +83,78 @@ class TestExpandNodelist(unittest.TestCase):
 from operator import mul
 import re
 
+from typing import Dict
+DimsMap = Dict[str,int]
+
 class CrayXC:
-    """ A Cray XC maps nodenames ("nid00123") to addresses (row, column,
-        cage (ie chassis), slot (ie blade), node). From this we get a 
-        "cname" like:  c{col:d}-{row:d}c{cage:d}s{slot:d}n{node:d} 
-        (eg c2-0c1s2n3). Note that to get the dragonfly group, the column
-        address needs to be decomposed into (group, cabinet). My original 
-        purpose for this class is/was to support drawing the dragonfly 
-        topology in a spatially-meaningful manner, so I'm more interested in
-        (cabinet, group) than (column), and the address here is cast as a
-        nest of dimensions from node-in-slot to row-in-room, with col-in-row
-        decomposed into (cab-in-group, group-in-row), then the column address
-        appended as a derived component.
+    """ A Cray XC maps nodenames ("nid00123") to addresses (dicts 
+        with the node, slot, cage, cabinet, group and row). From 
+        cabinet and group we can calculate the "column", ie 
+        cabinet-in-row, which is used in the cname. This class 
+        uses the extents of each "dimension" of the cluster to 
+        provide conversion between nids, cnames, addresses and 
+        nodenames
     """
+    # spaces and dims are basically the same, but used differently:
+    # extents are "size of a space" but address is "position in each dimension",
+    # so we provide two lists of these so different uses can use a sensible
+    # set of names:
+    spaces = ['slot', 'cage', 'cab', 'group', 'row', 'room' ]
+    dims = ['node'] + spaces[:-1]
 
-    dim_names = [ 'nodes_per_slot',    # SLOT
-                  'slots_per_cage',    # CAGE
-                  'cages_per_cab',     # CAB
-                  'cabs_per_group',    # GROUP
-                  'groups_per_row',    # ROW
-                  'rows_in_room',      # ROOM
-                  'cols_in_row'   ]    # derived from cab & group
-    # make it easy to get the index of a dim by its name:
-    _dims = ['node',
-             'slot',
-             'cage',
-             'cab',
-             'group',
-             'row',
-             'col' ]
-    dims = (lambda d: {name: d.index(name) for name in d})(_dims) 
-    # constants for dims (col is special and so lowercase)
-    SLOT,CAGE,CAB,GROUP,ROW,ROOM,col = range(len(dims))
-
-    def __init__(self, extents):
+    def __init__(self, extents: DimsMap):
         """ describe a Cray XC cluster in terms of the extents of each rank
             in it's Dragonfly topology. Extents should correspond with CrayXC.dim_names.
             Some example extents are: 
-                cori:   [4, 16, 3, 2, 6, 6]
-                edison: [4, 16, 3, 2, 4, 4]
+                cori:   {'slot':4, 'cage':16, 'cab':3, 'group':2, 'row':6, 'room':6}
+                edison: {'slot':4, 'cage':16, 'cab':3, 'group':2, 'row':4, 'room':4}
         """
-        assert len(extents)==len(self.dims)-1 # don't pass col, we calculate it
-        self.extents = list(extents) + [ extents[self.GROUP]*extents[self.ROW] ]
+        for d in self.spaces:
+            assert d in extents
+        self.extents = dict(extents)
         # total address space enclosed at each rank (eg 4x16=64 nodes/cage)
-        self.space = [reduce(mul, extents[:i]) for i in range(1,len(extents)+1)]
-        self.space += [ self.space[self.CAB] ] # column is special
+        space = 1
+        self.space = {}
+        for d in self.spaces:
+            space *= extents[d]
+            self.space[d] = space
+        # for convenience:
+        self.space['node'] = 1
+        self.extents['node'] = 1
 
-    def address_from_nid(self, nid):
-        """ address is a tuple of distance into each dim of self.extents """
-        address = list(self.space)
-        for dim in range(self.ROOM,0,-1):
-            address[dim] = nid // self.space[dim-1]
-            nid -= address[dim]*self.space[dim-1]
-        address[self.SLOT] = nid
-        # col is special, it is the col number, not the distance into the column:
-        address[self.col] = address[self.ROW]*self.extents[self.GROUP]+address[self.GROUP]
+    def address_from_nid(self, nid: int, withcol: bool = False) -> DimsMap:
+        """ address is dict with which node, slot, cage, etc """
+        address = {}
+        for dim in self.dims[-1::-1]:
+            address[dim] = nid // self.space[dim]
+            nid -= address[dim]*self.space[dim]
+        if withcol:
+            address['col'] = address['group']*self.extents['group']+address['cab']
+        #print(address)
         return address
 
-    def nid_from_address(self, address):
-        assert (len(address)==len(self.dims))
-        nid = address[0]
-        for dim in range(self.ROOM):
-            nid += address[dim+1]*self.space[dim]
+    def nid_from_address(self, address: DimsMap) -> int:
+        nid=0
+        if len(address)==1 and 'col' in address:
+            address['group'] = address['col'] // self.extents['group']
+            address['cab']   = address['col'] % self.extents['group']
+        for dim in self.dims:
+            nid += address.get(dim,0)*self.space[dim]
         return nid
 
-    _cname_fmt = 'c{{{col}}}-{{{row}}}c{{{cage}}}s{{{slot}}}n{{{node}}}'.format(**dims)
-    def cname_from_address(self, address):
-        return self._cname_fmt.format(*address)
+    _cname_fmt = 'c{col}-{row}c{cage}s{slot}n{node}'
+    def cname_from_address(self, address: DimsMap) -> str:
+        if not 'col' in address:
+            withcol = {'col':address.get('group',0)*self.extents['group']+address.get('cab',0)}
+            address = dict(withcol, **address)
+        return self._cname_fmt.format(**address)
 
     _re_address = re.compile('c(?P<col>\d+)-(?P<row>\d+)c(?P<cage>\d+)s(?P<slot>\d+)n(?P<node>\d+)')
-    def address_from_cname(self, cname):
+    def address_from_cname(self, cname: str) -> DimsMap:
         match = self._re_address.search(cname)
-        address = [ int(match.group(g)) for g in ['node', 'slot', 'cage' ] ]
-        col = int(match.group('col'))
-        group = col // self.extents[self.GROUP]
-        cab = col % self.extents[self.GROUP]
-        address += [ cab, group, int(match.group('row')), col ]
+        address = { dim: int(val) for dim,val in match.groupdict().items() }
+        address['group'] = address['col'] // self.extents['group']
+        address['cab']   = address['col'] % self.extents['group']
         return address
 
     def nid_from_nodename(self, nodename):
@@ -135,13 +165,29 @@ class CrayXC:
         """ nodenames are in format nid00000 """
         return 'nid{:05d}'.format(nid)
 
+    def nodename_from_address(self, address: DimsMap) -> str:
+        return self.nodename_from_nid(self.nid_from_address(address))
+
+    def address_from_nodename(self, nodename: str) -> DimsMap:
+        return self.address_from_nid(self.nid_from_nodename(nodename))
+
+    def cname_from_nodename(self, nodename: str) -> str:
+        addr = self.address_from_nid(self.nid_from_nodename(nodename))
+        return self.cname_from_address(addr)
+
+    def nodename_from_cname(self, cname: str) -> str:
+        addr = self.address_from_cname(self, cname)
+        return self.nodename_from_nid(self.nid_from_address(addr))
+
 
 import unittest
 import re
 class TestCrayXC(unittest.TestCase):
-
+    
     def setUp(self):
-        self.cori = CrayXC([4,16,3,2,6,6])
+        self.cori = CrayXC(extents={'slot':4, 'cage':16, 'cab':3, 
+                                    'group':2, 'row':6, 'room':6})
+
         # some corresponding nids and cnames:
         self.names  =  [ 'nid00005',   'nid00103',   'nid00739',   'nid01522' ]
         self.cnames =  [ 'c0-0c0s1n1', 'c0-0c1s9n3', 'c3-0c2s8n3', 'c7-0c2s12n2' ]
