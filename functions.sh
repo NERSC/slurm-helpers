@@ -3,6 +3,8 @@
 # dummy arg to add to env so bashrc can avoid unnecessarily sourcing this
 _slurm_helpers_defined=1
 
+alias scn=scontrol
+
 # utility function used by other things:
 # (this is here mostly in suport of nersc_hours)
 dhms_to_sec () 
@@ -64,7 +66,8 @@ nersc_hours ()
   local qos_factor=1
   local nodes=0
   local walltime=0  # in d-hh:mm:ss
-  [[ "$NERSC_HOST" == "edison" ]] && mcf=48 || mcf=80
+  #[[ "$NERSC_HOST" == "edison" ]] && mcf=48 || mcf=80
+  [[ "$NERSC_HOST" == "edison" ]] && mcf=64 || mcf=90
 
   if [[ $# -eq 0 ]]; then
     echo "$usage"
@@ -74,12 +77,15 @@ nersc_hours ()
   while [[ $# -gt 0 ]]; do
     case $1 in 
       -h*) echo "$usage" ; return 1 ;;
-      -knl) mcf=96 ;;
+      -m) mcf=$2 ; shift ;;
+      #-knl) mcf=96 ;;
+      -knl) mcf=90 ;;
       -shared) unit=NCPUS ;; 
       -prem|-premium) qos_factor=2 ;;
       -n) nodes=$2 ; shift ;;
       -t) walltime=$2 ; shift ;;
-      *) jobids=($*) ; break ;;
+#      *) jobids=($*) ; break ;;
+      *) jobids=( $(tr ',' ' ' <<< "$*") ) ; break ;;
     esac
     shift
   done
@@ -112,7 +118,8 @@ nersc_hours ()
       if [[ "$unit" == "NCPUS" ]]; then
         # charge is per core:
         usage=$((usage/32))
-      elif [[ $mcf -eq 96 && $count -ge 1024 ]]; then
+      #elif [[ $mcf -eq 96 && $count -ge 1024 ]]; then
+      elif [[ $mcf -eq 90 && $count -ge 1024 ]]; then
         echo "applying big job discount" >&2
         usage=$((usage*4/5))
       fi
@@ -146,6 +153,8 @@ nodehistory ()
 
 jobsummary () 
 { 
+  # NOTE: if job state 'RV' is specified, you get pending jobs as well as completed ones, 
+  # even if you didn't request them
   local opts='' 
   local f='JobID%-20,User,Submit,Start,End,State,ExitCode,DerivedExitCode,Elapsed,Timelimit,NNodes,NCPUS,NTasks' ; 
   local s1="1s/ +NodeList/ Nodelist/; 2s/(^.{$COLUMNS}).*/\1/"
