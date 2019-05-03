@@ -219,3 +219,52 @@ res_set_mode()
             --wrap="hostname"
     done
 }
+
+
+# short display:  Q_pos  Jobid  State  Partition User Name  Nodes TimeLeft  Priority  Reason  (need to capture priority and state for sorting too)
+# long display:   Q_pos  Jobid  State  Partition QOS User  Account  Name  Nodes CPUs TimeLimit  TimeLeft  Submittime Starttime Priority  Reason
+function myq () 
+{
+  local grepargs=""
+  local user=$USER
+  local addfields=""
+  local timef='function dhms(ss) { if (ss<0) { sign="-"; s=-ss } else { sign="" ; s=ss }; d=int(s/86400); s=s-(d*86400) ; h=int(s/3600) ;s=s-(3600*h) ; m=int(s/60) ;s=s-(m*60) ; return sprintf("%s%dd-%02d:%02d:%02d",sign,d,h,m,s);} BEGIN { t=systime() }'
+  local longfmt=0
+  if [[ $COLUMNS -ge 200 ]]; then longfmt=1; fi   # I kinda like the long display if theres room for it
+  while [[ $# -gt 0 ]]; do
+    case $1 in 
+      -a) user="" ; shift ;;
+      -u) user=$2 ; shift 2 ;;
+      -l) longfmt=1 ; shift ;;
+      -s) longfmt=0 ; shift ;;
+      -o) addfields="$2" ; shift 2 ;;
+      *)  break ;;
+    esac 
+  done
+  if (( $longfmt )) ; then
+    local fields='%.18i %.4t %8q %10P %8u %8a %20j %.6D %.6C %.10l %.10L %.20V %.20S %.10Q %.20r %.30E'
+    local pf=14
+    local usetimef="qt=dhms(t-\$12); out=gensub (/[[:blank:]]+[^[:blank:]]+/, sprintf(\"%21s\",qt),12); if (\$13~/[0-9]+/) {st=dhms(\$13-t) } else if (\$NF~/Resources/ && t-\$12>180) {st=\">4d\"} else {st=\$13}; out=gensub (/[[:blank:]]+[^[:blank:]]+/, sprintf(\"%21s\",st), 13, out);"
+  else
+    local fields='%.18i %.4t %8q %8u %20j %.6D %.10L %.10Q %.12r'
+    local pf=8  # priority field
+    local usetimef='out=$0;'
+  fi
+  fields+=" $addfields"
+  grepargs="$user $*" 
+  local awkscr="$timef NR==1 { gsub(/SUBMIT_TIME/, \"TIME_QUEUED\") ; print } NR>1 { $usetimef print out | \"sort -rsn -k$pf\" }"
+  local wholeq=$(SLURM_TIME_FORMAT='%s' squeue -r -t PD,R,CF,CG -o "$fields" | awk "$awkscr" | awk 'BEGIN { spos=0 ; rpos=0 ; notready="" } NR == 1 { print "0    Q_pos " $0 ; next } $2~/^[RC]/ { print "1        0 " $0; next } $NF~/Priority|Resources/ { line=$0 ; if ($3=="shared") { spos+=1 ; pos=spos } else {rpos+=1 ; pos=rpos } ; printf "2 %8d %s\n",pos,$0 ; next } { printf "3 %8s %s\n", "NotReady", $0 } ')
+
+  grepargs=${grepargs## }
+  if [[ ${#grepargs} -gt 0 ]]; then 
+    local search=""
+    for t in $grepargs ; do 
+      search+=" -e $t" 
+    done
+    body grep $search <<< "$wholeq" | body sort -sn -k1,2 | cut -c2- | less -FX
+  else 
+    body sort -sn -k1,2 <<< "$wholeq" | cut -c2- | less -FX 
+  fi 
+}
+
+function showq () { myq -l -a $* ; }
