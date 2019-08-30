@@ -220,6 +220,19 @@ res_set_mode()
     done
 }
 
+function body ()
+{
+  # run a stream command, but exempt the first line (or -n lines) from it - 
+  # eg for if I want to print the header line then grep for certain text in
+  # the remaining lines:
+  local nh=1;
+  if [[ "$1" =~ -[0-9] ]]; then
+      nh=${1#-};
+      shift;
+  fi;
+  cmd="$*";
+  awk 'NR <= '$nh'; NR > '$nh' {print $0 | "'"$cmd"'"}'
+}
 
 # short display:  Q_pos  Jobid  State  Partition User Name  Nodes TimeLeft  Priority  Reason  (need to capture priority and state for sorting too)
 # long display:   Q_pos  Jobid  State  Partition QOS User  Account  Name  Nodes CPUs TimeLimit  TimeLeft  Submittime Starttime Priority  Reason
