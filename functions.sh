@@ -121,7 +121,7 @@ nersc_hours ()
       #elif [[ $mcf -eq 96 && $count -ge 1024 ]]; then
       elif [[ $mcf -eq 90 && $count -ge 1024 ]]; then
         echo "applying big job discount" >&2
-        usage=$((usage*4/5))
+        usage=$((usage*3/5))
       fi
     fi
     let total+=$usage
