@@ -67,7 +67,7 @@ nersc_hours ()
   local nodes=0
   local walltime=0  # in d-hh:mm:ss
   #[[ "$NERSC_HOST" == "edison" ]] && mcf=48 || mcf=80
-  [[ "$NERSC_HOST" == "edison" ]] && mcf=64 || mcf=90
+  [[ "$NERSC_HOST" == "edison" ]] && mcf=64 || mcf=140
 
   if [[ $# -eq 0 ]]; then
     echo "$usage"
@@ -79,7 +79,7 @@ nersc_hours ()
       -h*) echo "$usage" ; return 1 ;;
       -m) mcf=$2 ; shift ;;
       #-knl) mcf=96 ;;
-      -knl) mcf=90 ;;
+      -knl) mcf=80 ;;
       -shared) unit=NCPUS ;; 
       -prem|-premium) qos_factor=2 ;;
       -n) nodes=$2 ; shift ;;
@@ -121,7 +121,7 @@ nersc_hours ()
       #elif [[ $mcf -eq 96 && $count -ge 1024 ]]; then
       elif [[ $mcf -eq 90 && $count -ge 1024 ]]; then
         echo "applying big job discount" >&2
-        usage=$((usage*3/5))
+        usage=$((usage*1/2))
       fi
     fi
     let total+=$usage
@@ -155,11 +155,12 @@ jobsummary ()
 { 
   # NOTE: if job state 'RV' is specified, you get pending jobs as well as completed ones, 
   # even if you didn't request them
-  local opts='' 
+  local opts='-D' 
   local f='JobID%-20,User,Submit,Start,End,State,ExitCode,DerivedExitCode,Elapsed,Timelimit,NNodes,NCPUS,NTasks' ; 
   local s1="1s/ +NodeList/ Nodelist/; 2s/(^.{$COLUMNS}).*/\1/"
   local s2="; s/(^.{$COLUMNS}).*/\1/"
   local compact="-X"  # normally show -X only, unless -F (for "full") passed in
+#  local since=$(date +%D --date='last week')
   show=:  # null command
   while [[ -n "$1" ]] ; do 
     case $1 in 
@@ -167,11 +168,16 @@ jobsummary ()
       -o) f+=",$2" ; shift 2 ;;                     # add fields like -o option of sacct (need to leave space after -o)
       -j) compact="" ; opts+=" $1 $2" ; shift 2 ;;  # job id
       -F) compact="" ; shift ;;                     # opposite of saact -X
+      -S) since="$2" ; shift 2 ;;
        *) opts+=" $1" ;  shift ;;                   # pass options through to sacct (eg -S...)
     esac
  done
  f+=',nodelist%-2500' 
- $show sacct -a $compact -o $f $opts ; sacct -a $compact -o $f $opts | sed -r "$s1 $s2" | less -FX 
+ #$show sacct -a $compact -S $since -o $f $opts ; sacct -a $compact -S $since -o $f $opts | sed -r "$s1 $s2" | less -FX 
+ #$show sacct -a $compact -S $since -o $f $opts ; sacct -a $compact -o $f $opts | sed -r "$s1 $s2" | less -FX 
+ cmdline="sacct -a $compact -S $since -o $f $opts"
+ $show $cmdline
+ $cmdline | sed -r "$s1 $s2" | less -FX
 }
 
 # this cancels all my jobs:
@@ -181,7 +187,7 @@ function sclear ()
 }
 
 # list info about qos and partitions:
-qos () { sacctmgr show -p qos | cut -d'|' -f 1,2,9,12,15,18,19,20,21 | column -s '|' -t ; }
+qos () { sacctmgr show -p qos $* | cut -d'|' -f 1,2,9,12,15,18,19,20,21 | column -s '|' -t ; }
 partitions () { sinfo -O "partition,available:6,time:.12,nodes:.6" ; }
 
 res_compact_nodelist() 
@@ -234,6 +240,17 @@ function body ()
   awk 'NR <= '$nh'; NR > '$nh' {print $0 | "'"$cmd"'"}'
 }
 
+#function pager ()
+#{
+#    in=$1 ; h=$(head -1 $1)
+#    if [[ -z $in ]] ; then
+#      h=$(head -1 /dev/stdin)
+#    fi
+#    echo "$h" 
+#    #header=$(head -1 /dev/stdin)
+#    #less -PM"$h" -FX $in
+#}
+
 # short display:  Q_pos  Jobid  State  Partition User Name  Nodes TimeLeft  Priority  Reason  (need to capture priority and state for sorting too)
 # long display:   Q_pos  Jobid  State  Partition QOS User  Account  Name  Nodes CPUs TimeLimit  TimeLeft  Submittime Starttime Priority  Reason
 function myq () 
@@ -266,17 +283,21 @@ function myq ()
   fields+=" $addfields"
   grepargs="$user $*" 
   local awkscr="$timef NR==1 { gsub(/SUBMIT_TIME/, \"TIME_QUEUED\") ; print } NR>1 { $usetimef print out | \"sort -rsn -k$pf\" }"
-  local wholeq=$(SLURM_TIME_FORMAT='%s' squeue -r -t PD,R,CF,CG -o "$fields" | awk "$awkscr" | awk 'BEGIN { spos=0 ; rpos=0 ; notready="" } NR == 1 { print "0    Q_pos " $0 ; next } $2~/^[RC]/ { print "1        0 " $0; next } $NF~/Priority|Resources/ { line=$0 ; if ($3=="shared") { spos+=1 ; pos=spos } else {rpos+=1 ; pos=rpos } ; printf "2 %8d %s\n",pos,$0 ; next } { printf "3 %8s %s\n", "NotReady", $0 } ')
-
+  local wholeq=$(SLURM_TIME_FORMAT='%s' squeue -r -t PD,R,CF,CG -o "$fields" | awk "$awkscr" | awk 'BEGIN { spos=0 ; rpos=0 ; notready="" } NR == 1 { print "0    Q_pos " $0 ; next } $2~/^[RC]/ { print "1        0 " $0; next } $NF~/Priority|Resources|ReqNodeNotAvail/ { line=$0 ; if ($3=="shared") { spos+=1 ; pos=spos } else {rpos+=1 ; pos=rpos } ; printf "2 %8d %s\n",pos,$0 ; next } { printf "3 %8s %s\n", "NotReady", $0 } ')
+  # less -PM"$h" q h=`head -1 q`
+  header=$(head -1 <<< "$wholeq" | cut -c-${COLUMNS})
+#  header="0    Q_pos $header"
   grepargs=${grepargs## }
   if [[ ${#grepargs} -gt 0 ]]; then 
     local search=""
     for t in $grepargs ; do 
       search+=" -e $t" 
     done
-    body grep $search <<< "$wholeq" | body sort -sn -k1,2 | cut -c2- | less -FX
+    body grep $search <<< "$wholeq" | body sort -sn -k1,2 | cut -c2- | less -PM"$header" -FX 
+    #body grep $search <<< "$wholeq" | body sort -sn -k1,2 | cut -c2- | pager 
   else 
-    body sort -sn -k1,2 <<< "$wholeq" | cut -c2- | less -FX 
+    body sort -sn -k1,2 <<< "$wholeq" | cut -c2- | less -PM"$header" -FX 
+    #body sort -sn -k1,2 <<< "$wholeq" | cut -c2- | pager
   fi 
 }
 
