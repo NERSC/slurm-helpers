@@ -5,6 +5,11 @@ _slurm_helpers_defined=1
 
 alias scn=scontrol
 
+admincomment () { 
+  local j=$2 ; shift; shift;
+  echo sacct $* -X -n -P -o admincomment $* -j $j 
+  sacct $* -X -n -P -o admincomment $* -j $j | jq ; }
+
 # utility function used by other things:
 # (this is here mostly in suport of nersc_hours)
 dhms_to_sec () 
@@ -140,7 +145,7 @@ nersc_hours ()
 # (paste the string this prints into the terminal as the user)
 user () 
 { 
-  [[ -z $DISPLAY ]] || echo "export DISPLAY=$DISPLAY ; xauth add `xauth list $DISPLAY`" ; usgrsu $* 
+  [[ -z $DISPLAY ]] || echo "export DISPLAY=$DISPLAY ; xauth add `xauth list $DISPLAY`" ; echo "alias vi='vi -u NONE'"; usgrsu $* 
 }
 
 # show what jobs have run on a given node or list of nodes, during the last day
@@ -160,7 +165,7 @@ jobsummary ()
   local s1="1s/ +NodeList/ Nodelist/; 2s/(^.{$COLUMNS}).*/\1/"
   local s2="; s/(^.{$COLUMNS}).*/\1/"
   local compact="-X"  # normally show -X only, unless -F (for "full") passed in
-#  local since=$(date +%D --date='last week')
+  local since=$(date +%D --date='last week')
   show=:  # null command
   while [[ -n "$1" ]] ; do 
     case $1 in 
@@ -172,12 +177,13 @@ jobsummary ()
        *) opts+=" $1" ;  shift ;;                   # pass options through to sacct (eg -S...)
     esac
  done
- f+=',nodelist%-2500' 
+ f+=',nodelist%-15000' 
  #$show sacct -a $compact -S $since -o $f $opts ; sacct -a $compact -S $since -o $f $opts | sed -r "$s1 $s2" | less -FX 
  #$show sacct -a $compact -S $since -o $f $opts ; sacct -a $compact -o $f $opts | sed -r "$s1 $s2" | less -FX 
  cmdline="sacct -a $compact -S $since -o $f $opts"
  $show $cmdline
- $cmdline | sed -r "$s1 $s2" | less -FX
+# $cmdline | sed -r "$s1 $s2" | less -FX
+ $cmdline | sed -r "$s1 $s2" | sed 's/  *$//' | $PAGER
 }
 
 # this cancels all my jobs:
@@ -251,6 +257,55 @@ function body ()
 #    #less -PM"$h" -FX $in
 #}
 
+## short display:  Q_pos  Jobid  State  Partition User Name  Nodes TimeLeft  Priority  Reason  (need to capture priority and state for sorting too)
+## long display:   Q_pos  Jobid  State  Partition QOS User  Account  Name  Nodes CPUs TimeLimit  TimeLeft  Submittime Starttime Priority  Reason
+#function myq () 
+#{
+#  local grepargs=""
+#  local user=$USER
+#  local addfields=""
+#  local timef='function dhms(ss) { if (ss<0) { sign="-"; s=-ss } else { sign="" ; s=ss }; d=int(s/86400); s=s-(d*86400) ; h=int(s/3600) ;s=s-(3600*h) ; m=int(s/60) ;s=s-(m*60) ; return sprintf("%s%dd-%02d:%02d:%02d",sign,d,h,m,s);} BEGIN { t=systime() }'
+#  local longfmt=0
+#  if [[ $COLUMNS -ge 200 ]]; then longfmt=1; fi   # I kinda like the long display if theres room for it
+#  while [[ $# -gt 0 ]]; do
+#    case $1 in 
+#      -a) user="" ; shift ;;
+#      -u) user=$2 ; shift 2 ;;
+#      -l) longfmt=1 ; shift ;;
+#      -s) longfmt=0 ; shift ;;
+#      -o) addfields="$2" ; shift 2 ;;
+#      *)  break ;;
+#    esac 
+#  done
+#  if (( $longfmt )) ; then
+#    local fields='%.18i %.4t %8q %10P %8u %8a %20j %.6D %.6C %.10l %.10L %.20V %.20S %.10Q %.20r %.30E'
+#    local pf=14
+#    local usetimef="qt=dhms(t-\$12); out=gensub (/[[:blank:]]+[^[:blank:]]+/, sprintf(\"%21s\",qt),12); if (\$13~/[0-9]+/) {st=dhms(\$13-t) } else if (\$NF~/Resources/ && t-\$12>180) {st=\">4d\"} else {st=\$13}; out=gensub (/[[:blank:]]+[^[:blank:]]+/, sprintf(\"%21s\",st), 13, out);"
+#  else
+#    local fields='%.18i %.4t %8q %8u %20j %.6D %.10L %.10Q %.12r'
+#    local pf=8  # priority field
+#    local usetimef='out=$0;'
+#  fi
+#  fields+=" $addfields"
+#  grepargs="$user $*" 
+#  local awkscr="$timef NR==1 { gsub(/SUBMIT_TIME/, \"TIME_QUEUED\") ; print } NR>1 { $usetimef print out | \"sort -rsn -k$pf\" }"
+#  local wholeq=$(SLURM_TIME_FORMAT='%s' squeue -r -t PD,R,CF,CG -o "$fields" | awk "$awkscr" | awk 'BEGIN { spos=0 ; rpos=0 ; notready="" } NR == 1 { print "0    Q_pos " $0 ; next } $2~/^[RC]/ { print "1        0 " $0; next } $NF~/Priority|Resources|ReqNodeNotAvail/ { line=$0 ; if ($3=="shared") { spos+=1 ; pos=spos } else {rpos+=1 ; pos=rpos } ; printf "2 %8d %s\n",pos,$0 ; next } { printf "3 %8s %s\n", "NotReady", $0 } ')
+#  # less -PM"$h" q h=`head -1 q`
+#  header=$(head -1 <<< "$wholeq" | cut -c-${COLUMNS})
+##  header="0    Q_pos $header"
+#  grepargs=${grepargs## }
+#  if [[ ${#grepargs} -gt 0 ]]; then 
+#    local search=""
+#    for t in $grepargs ; do 
+#      search+=" -e $t" 
+#    done
+#    body grep $search <<< "$wholeq" | body sort -sn -k1,2 | cut -c2- | less -PM"$header" -FX 
+#    #body grep $search <<< "$wholeq" | body sort -sn -k1,2 | cut -c2- | pager 
+#  else 
+#    body sort -sn -k1,2 <<< "$wholeq" | cut -c2- | less -PM"$header" -FX 
+#    #body sort -sn -k1,2 <<< "$wholeq" | cut -c2- | pager
+#  fi 
+#}
 # short display:  Q_pos  Jobid  State  Partition User Name  Nodes TimeLeft  Priority  Reason  (need to capture priority and state for sorting too)
 # long display:   Q_pos  Jobid  State  Partition QOS User  Account  Name  Nodes CPUs TimeLimit  TimeLeft  Submittime Starttime Priority  Reason
 function myq () 
@@ -258,9 +313,12 @@ function myq ()
   local grepargs=""
   local user=$USER
   local addfields=""
+  #local fields='%.18i %.4t %10P %8u %20j %.6D %.10L %.10Q %.12r'
+  #local pf=8  # priority field
   local timef='function dhms(ss) { if (ss<0) { sign="-"; s=-ss } else { sign="" ; s=ss }; d=int(s/86400); s=s-(d*86400) ; h=int(s/3600) ;s=s-(3600*h) ; m=int(s/60) ;s=s-(m*60) ; return sprintf("%s%dd-%02d:%02d:%02d",sign,d,h,m,s);} BEGIN { t=systime() }'
   local longfmt=0
   if [[ $COLUMNS -ge 200 ]]; then longfmt=1; fi   # I kinda like the long display if theres room for it
+  #local usetimef='out=$0;'
   while [[ $# -gt 0 ]]; do
     case $1 in 
       -a) user="" ; shift ;;
@@ -268,37 +326,38 @@ function myq ()
       -l) longfmt=1 ; shift ;;
       -s) longfmt=0 ; shift ;;
       -o) addfields="$2" ; shift 2 ;;
+#      -l) fields='%.18i %.4t %10P %8q %8u %8a %20j %.6D %.6C %.10l %.10L %.20V %.20S %.10Q %.12r'; pf=14; shift ; usetimef="qt=dhms(t-\$12); out=gensub (/[[:blank:]]+[^[:blank:]]+/, sprintf(\"%21s\",qt),12); if (\$13~/[0-9]+/) {st=dhms(\$13-t) } else if (\$NF~/Resources/) {st=\">4d\"} else {st=\$13}; out=gensub (/[[:blank:]]+[^[:blank:]]+/, sprintf(\"%21s\",st), 13, out);" ;;
       *)  break ;;
     esac 
   done
   if (( $longfmt )) ; then
     local fields='%.18i %.4t %8q %10P %8u %8a %20j %.6D %.6C %.10l %.10L %.20V %.20S %.10Q %.20r %.30E'
     local pf=14
+    local rf=15 # reason field
     local usetimef="qt=dhms(t-\$12); out=gensub (/[[:blank:]]+[^[:blank:]]+/, sprintf(\"%21s\",qt),12); if (\$13~/[0-9]+/) {st=dhms(\$13-t) } else if (\$NF~/Resources/ && t-\$12>180) {st=\">4d\"} else {st=\$13}; out=gensub (/[[:blank:]]+[^[:blank:]]+/, sprintf(\"%21s\",st), 13, out);"
   else
     local fields='%.18i %.4t %8q %8u %20j %.6D %.10L %.10Q %.12r'
     local pf=8  # priority field
+    local rf=9 # reason field
     local usetimef='out=$0;'
   fi
   fields+=" $addfields"
   grepargs="$user $*" 
   local awkscr="$timef NR==1 { gsub(/SUBMIT_TIME/, \"TIME_QUEUED\") ; print } NR>1 { $usetimef print out | \"sort -rsn -k$pf\" }"
-  local wholeq=$(SLURM_TIME_FORMAT='%s' squeue -r -t PD,R,CF,CG -o "$fields" | awk "$awkscr" | awk 'BEGIN { spos=0 ; rpos=0 ; notready="" } NR == 1 { print "0    Q_pos " $0 ; next } $2~/^[RC]/ { print "1        0 " $0; next } $NF~/Priority|Resources|ReqNodeNotAvail/ { line=$0 ; if ($3=="shared") { spos+=1 ; pos=spos } else {rpos+=1 ; pos=rpos } ; printf "2 %8d %s\n",pos,$0 ; next } { printf "3 %8s %s\n", "NotReady", $0 } ')
-  # less -PM"$h" q h=`head -1 q`
-  header=$(head -1 <<< "$wholeq" | cut -c-${COLUMNS})
-#  header="0    Q_pos $header"
+  #local wholeq=$(SLURM_TIME_FORMAT='%s' squeue -r -t PD,R -o "$fields" | awk "$awkscr" | awk 'BEGIN { spos=0 ; rpos=0 ; notready="" } NR == 1 { print "0    Q_pos " $0 ; next } $2=="R" { print "1        0 " $0; next } $NF~/Priority|Resources/ { line=$0 ; if ($3=="shared") { spos+=1 ; pos=spos } else {rpos+=1 ; pos=rpos } ; printf "2 %8d %s\n",pos,$0 ; next } { printf "3 %8s %s\n", "NotReady", $0 } ' | body sort -sn -k1,2 | cut -c2-)
+  local wholeq=$(SLURM_TIME_FORMAT='%s' squeue -r -t PD,R,CF,CG -o "$fields" | awk "$awkscr" | awk 'BEGIN { spos=0 ; rpos=0 ; notready="" } NR == 1 { print "0    Q_pos " $0 ; next } $2~/^[RC]/ { print "1        0 " $0; next } $'$rf'~/Priority|Resources|ReqNodeNotAvail/ { line=$0 ; if ($3=="shared") { spos+=1 ; pos=spos } else {rpos+=1 ; pos=rpos } ; printf "2 %8d %s\n",pos,$0 ; next } { printf "3 %8s %s\n", "NotReady", $0 } ')
+
   grepargs=${grepargs## }
   if [[ ${#grepargs} -gt 0 ]]; then 
     local search=""
     for t in $grepargs ; do 
       search+=" -e $t" 
     done
-    body grep $search <<< "$wholeq" | body sort -sn -k1,2 | cut -c2- | less -PM"$header" -FX 
-    #body grep $search <<< "$wholeq" | body sort -sn -k1,2 | cut -c2- | pager 
+    body grep $search <<< "$wholeq" | body sort -sn -k1,2 | cut -c2- | less -FX
   else 
-    body sort -sn -k1,2 <<< "$wholeq" | cut -c2- | less -PM"$header" -FX 
-    #body sort -sn -k1,2 <<< "$wholeq" | cut -c2- | pager
+    body sort -sn -k1,2 <<< "$wholeq" | cut -c2- | less -FX 
   fi 
 }
-
 function showq () { myq -l -a $* ; }
+
+#function showq () { myq -l -a $* ; }
